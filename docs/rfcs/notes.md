@@ -1,7 +1,7 @@
 # Design notes
 Client metering proposals:
 
-### Baseline ZKCP (with optimizations)
+## Baseline ZKCP (with optimizations)
 ZKCP for the full data without payment channels involved.
 
 *   Client requests retrieval and opens a pull data channel with a provider. Client stakes the payment amount on-chain to start the channel.

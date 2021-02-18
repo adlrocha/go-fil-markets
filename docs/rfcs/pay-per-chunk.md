@@ -1,6 +1,4 @@
-# State machine designs
-
-## Pay-per-chunk
+# Pay-per-chunk
 ### Client
 ```mermaid
 stateDiagram-v2

@@ -1,7 +1,11 @@
-# State machine designs
-
-## Baseline ZKCP
-ZKCP for the full data without payment channels.
+# Baseline ZKCP
+ZKCP for the full data. The payment channel is required to
+perform the hash-lock transaction in Filecoin.
+* Client creates payment channel with enough funds for the payment.
+* Opens pull-data channel with the provider storing the content.
+* The provider sends the data and the proofs.
+* Client sends a hash-locked voucher with the funds for the payment.
+* To redeem the voucher the provider needs to expose the key.
 
 **Implementation requirements:**
 * Building the right proofs for the data to send them through data channel.
@@ -18,17 +22,15 @@ ZKCP for the full data without payment channels.
 - Use payment channel to perform incremental payments which are settled by a fair exchange.
 
 ### Client
-* To unlock the deposit, the provider sends `k` in the transaction
-to validate the pre-image, and the client can get knowledge of the key
-used to encrypt the data.
 
 ```mermaid
 stateDiagram-v2
 [*] --> DealStatusNew: ClientRetrieve
 DealStatusNew --> DealStatusWaitAcceptance
 DealStatusWaitAcceptance --> DealStatusAccepted
-DealStatusAccepted --> DealStatusOpenDataChannel
-DealStatusOpenDataChannel --> DealStatusOngoing
+DealStatusAccepted --> DealStatusPaymentChannelCreating
+DealStatusPaymentChannelCreating --> DealStatusChannelAllocatingLane
+DealStatusChannelAllocatingLane --> DealStatusOngoing
 
 note right of DealStatusOngoing
 Deal warmup finished.
@@ -37,9 +39,15 @@ end note
 
 DealStatusOngoing --> DealStatusWaitingData
 DealStatusWaitingData --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusCompleted
+DealStatusVerifyProofs --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusSendFunds
+DealStatusSendFunds --> DealStatusCheckFunds
+DealStatusCheckFunds --> DealStatusCompleted
+
+note right of DealStatusSendFunds
+Send hash-locked voucher for provider.
+Only redeemable if the key is revealed.
+end note
 
 note right of DealStatusVerifyProofs
 Verifies Proof^-1(c, k, y) where
@@ -47,12 +55,6 @@ c = Enc_k(data), y = sha(k)
 end note
 
 DealStatusCompleted --> [*]
-
-note right of DealStatusStakePayment
-Locks funds on-chain that can only
-be unlocked commiting the pre-image
-of sha(k) signed by client
-end note
 ```
 
 ### Provider
@@ -64,199 +66,23 @@ DealStatusUnsealing --> DealStatusUnsealed
 DealStatusUnsealed --> DealStatusOngoing
 DealStatusOngoing --> DealStatusEncrypt
 DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusCompleted
-note left of DealStatusWaitStake
-Waits for client to stake funds on-chain
-for the right pre-image before going on.
+DealStatusGenerateProof --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusRevealKey
+DealStatusRevealKey --> DealStatusCompleted
+note left of DealStatusFundsNeeded
+Waits for client to send voucher
+with the payment. 
 end note
 note left of DealStatusGenerateProof
 Generate Proof(c, k, y) where
 c = Enc_k(data), y = sha(k)
 end note
-DealStatusCompleted --> [*]
 
-note left of DealStatusCompleted
-The channel settlement is performed
-manually. Not part of fsm.
+note left of DealStatusRevealKey
+Reveals key. Either redeeming the
+voucher or directly sending it to
+the client.
 end note
-```
-
-## ZKCP-per-chunk
-This assumes a ZKCP protocol with a proof-of-retrievability per chunk.
-Is the traditional ZKCP proposal for chunks without the use of payment channels.
-
-**Implementation requirements:**
-* Building the right proofs for the data to send them through data channel.
-    - 
-* Hash-lock transactions in Filecoin
-
-
-### Client
-* To unlock the deposit, the provider sends `k` in the transaction
-to validate the pre-image, and the client can get knowledge of the key
-used to encrypt the data.
-
-```mermaid
-stateDiagram-v2
-[*] --> DealStatusNew: ClientRetrieve
-DealStatusNew --> DealStatusWaitAcceptance
-DealStatusWaitAcceptance --> DealStatusAccepted
-DealStatusAccepted --> DealStatusOpenDataChannel
-DealStatusOpenDataChannel --> DealStatusOngoing
-
-note right of DealStatusOngoing
-Deal warmup finished.
-Here is were the actual retrieval begins
-end note
-
-DealStatusOngoing --> DealStatusWaitingBlock
-DealStatusWaitingBlock --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusOngoing
-
-note right of DealStatusVerifyProofs
-Verifies Proof^-1(c, k, y) where
-c = Enc_k(data), y = sha(k)
-end note
-DealStatusOngoing --> DealStatusBlockComplete
-DealStatusBlockComplete --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusFinalStakePayment
-DealStatusFinalStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusCompleted
-DealStatusCompleted --> [*]
-
-note right of DealStatusStakePayment
-Locks funds on-chain that can only
-be unlocked commiting the pre-image
-of sha(k) signed by client
-end note
-```
-
-### Provider
-```mermaid
-stateDiagram-v2
-[*] --> DealStatusNew: RetrievalOrder
-DealStatusNew --> DealStatusUnsealing
-DealStatusUnsealing --> DealStatusUnsealed
-DealStatusUnsealed --> DealStatusOngoing
-DealStatusOngoing --> DealStatusEncrypt
-DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusOngoing
-note left of DealStatusWaitStake
-Waits for client to stake funds on-chain
-for the right pre-image before going on.
-end note
-note left of DealStatusGenerateProof
-Generate Proof(c, k, y) where
-c = Enc_k(data), y = sha(k)
-end note
-DealStatusOngoing --> DealStatusBlockComplete
-DealStatusBlockComplete --> DealStatusEncrypt
-DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitFinalStake
-DealStatusWaitFinalStake --> DealStatusCompleted
-DealStatusCompleted --> [*]
-
-note left of DealStatusCompleted
-The channel settlement is performed
-manually. Not part of fsm.
-end note
-```
-
-
-## ZKCP-per-chunk with payment channels
-This assumes a ZKCP protocol with a proof-of-retrievability per chunk.
-Is the traditional ZKCP proposal for chunks with payment channels.
-There is a voucher exchange with intermediate payments for each chunk.
-The provider needs to release the key to redeem the vouchers and settle
-the payment channel. The client can't escape with the data sent (it is
-encrypted).
-
-**Implementation requirements:**
-* Building the right proofs for the data to send them through data channel.
-* Hash-lock transactions in Filecoin
-
-
-### Client
-* To settle the payment channel, the provider needs to send k for redemption. 
-
-```mermaid
-stateDiagram-v2
-[*] --> DealStatusNew: ClientRetrieve
-DealStatusNew --> DealStatusWaitAcceptance
-DealStatusWaitAcceptance --> DealStatusAccepted
-DealStatusAccepted --> DealStatusOpenDataChannel
-DealStatusAccepted --> DealStatusPaymentChannelCreating
-DealStatusPaymentChannelCreating --> DealStatusChannelAllocatingLane
-DealStatusChannelAllocatingLane --> DealStatusOngoing
-
-DealStatusOngoing --> DealStatusWaitingFirstBlock
-DealStatusWaitingBlock --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusOngoing
-
-note right of DealStatusOngoing
-Deal warmup finished.
-Here is were the actual retrieval begins
-end note
-
-note right of DealStatusFirstBlock
-Deal warmup finished.
-Here is were the actual retrieval begins
-end note
-
-DealStatusOngoing --> DealStatusWaitingBlock
-DealStatusWaitingBlock --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusOngoing
-
-note right of DealStatusVerifyProofs
-Verifies Proof^-1(c, k, y) where
-c = Enc_k(data), y = sha(k)
-end note
-DealStatusOngoing --> DealStatusBlockComplete
-DealStatusBlockComplete --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusFinalStakePayment
-DealStatusFinalStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusCompleted
-DealStatusCompleted --> [*]
-
-note right of DealStatusStakePayment
-Locks funds on-chain that can only
-be unlocked commiting the pre-image
-of sha(k) signed by client
-end note
-```
-
-### Provider
-```mermaid
-stateDiagram-v2
-[*] --> DealStatusNew: RetrievalOrder
-DealStatusNew --> DealStatusUnsealing
-DealStatusUnsealing --> DealStatusUnsealed
-DealStatusUnsealed --> DealStatusOngoing
-DealStatusOngoing --> DealStatusEncrypt
-DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusOngoing
-note left of DealStatusWaitStake
-Waits for client to stake funds on-chain
-for the right pre-image before going on.
-end note
-note left of DealStatusGenerateProof
-Generate Proof(c, k, y) where
-c = Enc_k(data), y = sha(k)
-end note
-DealStatusOngoing --> DealStatusBlockComplete
-DealStatusBlockComplete --> DealStatusEncrypt
-DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitFinalStake
-DealStatusWaitFinalStake --> DealStatusCompleted
 DealStatusCompleted --> [*]
 
 note left of DealStatusCompleted

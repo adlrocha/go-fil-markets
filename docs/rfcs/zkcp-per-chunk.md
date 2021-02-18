@@ -1,8 +1,8 @@
-# State machine designs
-
-## ZKCP-per-chunk
+# ZKCP-per-chunk
 This assumes a ZKCP protocol with a proof-of-retrievability per chunk.
-Is the traditional ZKCP proposal for chunks without the use of payment channels.
+Is the traditional ZKCP proposal but running a fair-exchange for
+each chunk instead of doing it for the whole file.
+* This would allow the use of fixed-size chunks.
 
 **Implementation requirements:**
 * Building the right proofs for the data to send them through data channel.
@@ -11,17 +11,15 @@ Is the traditional ZKCP proposal for chunks without the use of payment channels.
 
 
 ### Client
-* To unlock the deposit, the provider sends `k` in the transaction
-to validate the pre-image, and the client can get knowledge of the key
-used to encrypt the data.
 
 ```mermaid
 stateDiagram-v2
 [*] --> DealStatusNew: ClientRetrieve
 DealStatusNew --> DealStatusWaitAcceptance
 DealStatusWaitAcceptance --> DealStatusAccepted
-DealStatusAccepted --> DealStatusOpenDataChannel
-DealStatusOpenDataChannel --> DealStatusOngoing
+DealStatusAccepted --> DealStatusPaymentChannelCreating
+DealStatusPaymentChannelCreating --> DealStatusChannelAllocatingLane
+DealStatusChannelAllocatingLane --> DealStatusOngoing
 
 note right of DealStatusOngoing
 Deal warmup finished.
@@ -30,25 +28,24 @@ end note
 
 DealStatusOngoing --> DealStatusWaitingBlock
 DealStatusWaitingBlock --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusOngoing
+DealStatusVerifyProofs --> DealStatusSendFunds
+DealStatusSendFunds --> DealStatusCheckFunds
+DealStatusCheckFunds --> DealStatusOngoing
 
 note right of DealStatusVerifyProofs
 Verifies Proof^-1(c, k, y) where
 c = Enc_k(data), y = sha(k)
 end note
-DealStatusOngoing --> DealStatusBlockComplete
+DealStatusOngoing --> DealStatusBlockComplete: FinalChunk?
 DealStatusBlockComplete --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusFinalStakePayment
-DealStatusFinalStakePayment --> DealStatusWaitForFinalOnchainTx
-DealStatusWaitForFinalOnchainTx --> DealStatusCompleted
+DealStatusVerifyProofs --> DealStatusSendFunds
+DealStatusSendFunds --> DealStatusCheckFunds
+DealStatusCheckFunds --> DealStatusCompleted: AllChunksRcvd?
 DealStatusCompleted --> [*]
 
-note right of DealStatusStakePayment
-Locks funds on-chain that can only
-be unlocked commiting the pre-image
-of sha(k) signed by client
+note right of DealStatusSendFunds
+Send hash-locked voucher for provider.
+Only redeemable if the key is revealed.
 end note
 ```
 
@@ -61,11 +58,12 @@ DealStatusUnsealing --> DealStatusUnsealed
 DealStatusUnsealed --> DealStatusOngoing
 DealStatusOngoing --> DealStatusEncrypt
 DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusOngoing
-note left of DealStatusWaitStake
-Waits for client to stake funds on-chain
-for the right pre-image before going on.
+DealStatusGenerateProof --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusRevealKey
+DealStatusRevealKey --> DealStatusOngoing
+note left of DealStatusFundsNeeded
+Waits for client to send voucher
+with the payment. 
 end note
 note left of DealStatusGenerateProof
 Generate Proof(c, k, y) where
@@ -73,9 +71,9 @@ c = Enc_k(data), y = sha(k)
 end note
 DealStatusOngoing --> DealStatusBlockComplete
 DealStatusBlockComplete --> DealStatusEncrypt
-DealStatusEncrypt --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitFinalStake
-DealStatusWaitFinalStake --> DealStatusCompleted
+DealStatusGenerateProof --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusRevealKey
+DealStatusRevealKey --> DealStatusCompleted
 DealStatusCompleted --> [*]
 
 note left of DealStatusCompleted

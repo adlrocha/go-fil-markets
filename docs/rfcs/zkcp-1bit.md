@@ -1,12 +1,16 @@
-# State machine designs
 
-## ZKCP-1bit
+# ZKCP-1bit
 Instead of having to use a different key for each chunk like in
 a traditional chunk-based ZKCP, all the data is encrypted with the same `k` of
 `n bits`. There is a payment and a fair-exchange for 1 bit of the key every `m/n`.
-It is a mix between traditional ZKCP-per-chunk and continous-ZKCP.
+It is an adaptation of the traditional ZKCP-per-chunk and continous-ZKCP.
+To prevent attacks from both parties, the provider needs to redeem the previous voucher
+the moment it reveals the key-bit, and
+before sending the next batch of chunks. The provider may choose to follow an optimistic
+approach and trust the client all the way. In this case, it sends the key to the client
+and defers the redemption of the vouchers to the end of the exchange (without a judge actor like
+in optimistic-zkcp this may mean that the client runs with the data without paying).
 
-There is no need for a payment channel.
 
 **Implementation requirements:**
 * Building the right proofs for the data to send them through data channel.
@@ -26,14 +30,15 @@ stateDiagram-v2
 [*] --> DealStatusNew: ClientRetrieve
 DealStatusNew --> DealStatusWaitAcceptance
 DealStatusWaitAcceptance --> DealStatusAccepted
-DealStatusAccepted --> DealStatusOpenDataChannel
-DealStatusOpenDataChannel --> DealStatusOngoing
+DealStatusAccepted --> DealStatusPaymentChannelCreating
+DealStatusPaymentChannelCreating --> DealStatusChannelAllocatingLane
+DealStatusChannelAllocatingLane --> DealStatusOngoing
 
 DealStatusOngoing --> DealStatus1BitExchange
 DealStatus1BitExchange --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForOnchainTx
-DealStatusWaitForOnchainTx --> DealStatusOngoing
+DealStatusVerifyProofs --> DealStatusSendFunds
+DealStatusSendFunds --> DealStatusCheckFunds
+DealStatusCheckFunds --> DealStatusOngoing
 
 note right of DealStatusVerifyProofs
 Verifies that the bit being exchanged was used
@@ -41,12 +46,12 @@ in the key that encrypts the data
 Proof(c, y, k) where c = Enc_k(data), y = sha(k) 
 end note
 
-DealStatusOngoing --> DealStatusBlockComplete
+DealStatusOngoing --> DealStatusBlockComplete: FinalBit?
 DealStatusBlockComplete --> DealStateFinalBitExchange
 DealStateFinalBitExchange --> DealStatusVerifyProofs
-DealStatusVerifyProofs --> DealStatusStakePayment
-DealStatusStakePayment --> DealStatusWaitForFinalOnchainTx
-DealStatusWaitForFinalOnchainTx --> DealStatusCompleted
+DealStatusVerifyProofs --> DealStatusSendFunds
+DealStatusSendFunds --> DealStatusCheckFunds
+DealStatusCheckFunds --> DealStatusCompleted: FinalBitRevealed?
 DealStatusCompleted --> [*]
 
 ```
@@ -63,15 +68,17 @@ DealStatusEncrypt --> DealStatusOngoing
 
 DealStatusOngoing --> DealStatus1BitProof
 DealStatus1BitProof --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusOngoing
+DealStatusGenerateProof --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusRevealKeyBit
+DealStatusRevealKeyBit --> DealStatusOngoing
 
 
-DealStatusOngoing --> DealStatusBlockComplete
-DealStatusBlockComplete --> DealStateFinalBitExchange
-DealStatusFinalBitExchange --> DealStatusGenerateProof
-DealStatusGenerateProof --> DealStatusWaitStake
-DealStatusWaitStake --> DealStatusCompleted
+DealStatusOngoing --> DealStatusBlockComplete: FinalBit?
+DealStatusBlockComplete --> DealStatusFinalBitProof
+DealStatusFinalBitProof --> DealStatusGenerateProof
+DealStatusGenerateProof --> DealStatusFundsNeeded
+DealStatusFundsNeeded --> DealStatusRevealKeyBit
+DealStatusRevealKeyBit --> DealStatusCompleted: FinalBitRevealed?
 DealStatusCompleted --> [*]
 
 note left of DealStatusGenerateProof
